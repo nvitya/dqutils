@@ -1,0 +1,45 @@
+
+use configfile
+
+object OPrgConfig(OConfigFile):
+
+    // configuration fields here with defaults,
+
+    http_listen_port : uint16 = 3000
+
+  	db_host : str = "127.0.0.1"
+  	db_user : str = "sensorlog"
+  	db_pass : str = "dbaccess"
+  	db_name : str = "sensorlogger"
+
+    log_to_output : bool = false
+
+    func ParseConfigLine(ids : rostr)  [[override]] ..
+endobject
+
+
+var prgconfig <- OPrgConfig()
+
+
+implementation
+
+use ./sensorhandler as sh  // manipulated external `sensorhandler` object
+
+
+func OPrgConfig.ParseConfigLine(ids : rostr)  [[override]]:
+    if   'DB_HOST' == ids:  db_host = ParseStrAssignment()
+    elif 'DB_USER' == ids:  db_user = ParseStrAssignment()
+    elif 'DB_PASS' == ids:  db_pass = ParseStrAssignment()
+    elif 'DB_NAME' == ids:  db_name = ParseStrAssignment()
+
+    elif 'LOG_TO_OUTPUT' == ids: log_to_output = ParseBoolAssignment()
+
+    // configuration in external objects
+    elif 'SENSORSCALE' == ids: @sh.sensorhandler.sensorscale = ParseNumAssignment()
+
+    elif 'HTTP_LISTEN_PORT' == ids:  http_listen_port = Trunc(ParseNumAssignment())
+
+    else:
+        ParseError('Unknown setting: "{}"', [ids])
+    endif
+endfunc

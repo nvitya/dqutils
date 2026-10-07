@@ -1,0 +1,178 @@
+/*
+ * Copyright (c) 2026 Viktor Guath-Nagy and DQ contributors
+ * This file is originated from the DQ-Utilities project at
+ *   https://github.com/nvitya/dqutils/configfile
+ *
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ * See ../LICENSES/Apache-2.0.txt and ../LICENSES/LLVM-exception.txt
+ * for the full license text.
+ * ---------------------------------------------------------------------------------
+ * file:    configfile/configfile.dq
+ * authors: nvitya
+ * created: 2026-10-07
+ * brief:   Simple `identifier = value` type config file handling with `#` comments
+ */
+
+const PKGVER_CONFIGFILE : rostr = '1.0'
+
+use strparse
+use file
+use print
+use strutils
+
+object EConfigFile(Exception):
+endobject
+
+object OConfigFile:
+protected
+    filedata : str
+    sp       <- OStrParse()
+
+    func ParseError(astr : rostr) [[overload]] ..
+    func ParseError(astr : rostr, values : []anyvalue) [[overload]] ..
+
+public
+    filename : str
+
+    func *Create() ..
+
+    func LoadFile(afilename : rostr) ..
+    func ParseConfig() ..
+
+    func ParseConfigLine(ids : rostr)  [[virtual]] ..
+
+public
+    func ParseNumAssignment() -> float ..
+    func ParseBoolAssignment() -> bool ..
+    func ParseStrAssignment() -> str ..
+
+    func ParseStrValue() -> str ..
+    func ParseNumValue() -> float ..
+    func ParseBoolValue() -> bool ..
+
+endobject
+
+
+implementation
+
+func OConfigFile.*Create():
+
+endfunc
+
+func OConfigFile.LoadFile(afilename : rostr):
+    filename = afilename
+    filedata = @.FileReadText(filename)
+
+    //@.PrintLn('File data:\n{}', [filedata])
+
+    sp.Init(filedata)
+    ParseConfig()
+endfunc
+
+func OConfigFile.ParseError(astr : rostr)  [[overload]]:
+    raise EConfigFile('{}:{}: {}', [filename, sp.GetLineNum(), astr])
+endfunc
+
+func OConfigFile.ParseError(astr : rostr, values : []anyvalue)  [[overload]]:
+    raise EConfigFile('{}:{}: {}', [filename, sp.GetLineNum(), @.Format(astr, values)])
+endfunc
+
+func OConfigFile.ParseConfig():
+    sp.SkipWhite()
+    sp.CheckSymbol("\xEF\xBB\xBF")	// skip UTF-8 byte order mark at the beginning
+    sp.SkipWhite()
+
+    var ids : str
+
+    while sp.readp < sp.bufend:
+        sp.ReadIdentifier(ids)
+        if ids == '':
+            ParseError('Identifier is missing')
+        endif
+        ids = @.StrUpper(ids)
+
+        ParseConfigLine(ids)
+
+        sp.SkipWhite()
+
+        while sp.CheckSymbol(";"):
+            sp.SkipWhite()
+        endwhile
+
+        sp.SkipWhite()
+    endwhile
+endfunc
+
+func OConfigFile.ParseConfigLine(ids : rostr)  [[virtual]]:
+    ParseError('Unknown identifier: "{}"', [ids])
+endfunc
+
+func OConfigFile.ParseStrAssignment() -> str:
+    sp.SkipWhite()
+    if not sp.CheckSymbol('='):
+        ParseError('= is missing')
+    endif
+    sp.SkipWhite()
+    result = ParseStrValue()
+endfunc
+
+func OConfigFile.ParseStrValue() -> str:
+    sp.SkipWhite()
+    if sp.CheckSymbol("\""):  // double quoted string ?
+        if not sp.ReadTo('"'):
+            ParseError('End of string (") not found.')
+        endif
+        result = sp.PrevStr()
+        sp.CheckSymbol("\"")  // skip the closing "
+
+    elif sp.CheckSymbol("'"): // single quoted string ?
+        if not sp.ReadTo("'"):
+            ParseError('End of string (\') not found.')
+        endif
+        result = sp.PrevStr()
+        sp.CheckSymbol("'")  // skip the closing "
+    else:
+        ParseError('String Value is Missing')
+        result = '' // never reached, but required for the DQ result value set checking
+    endif
+endfunc
+
+func OConfigFile.ParseNumAssignment() -> float:
+    sp.SkipWhite()
+    if not sp.CheckSymbol('='):
+        ParseError('= is missing')
+    endif
+    sp.SkipWhite()
+    result = ParseNumValue()
+endfunc
+
+func OConfigFile.ParseNumValue() -> float:
+    if sp.CheckSymbol('0x'):  // hexadecimal integer value
+        if not sp.ReadHexNumbers():
+            ParseError('Invalid Hex Number')
+        endif
+        result = sp.PrevHexToInt()
+    else:
+        if not sp.ReadFloatNum():
+            ParseError('Invalid Number')
+        endif
+        result = sp.PrevToFloat()
+    endif
+endfunc
+
+func OConfigFile.ParseBoolAssignment() -> bool:
+    sp.SkipWhite()
+    if not sp.CheckSymbol('='):
+        ParseError('= is missing')
+    endif
+    sp.SkipWhite()
+    result = ParseBoolValue()
+endfunc
+
+func OConfigFile.ParseBoolValue() -> bool:
+    if not sp.ReadAlphaNum():  // this allows 1, 0 too
+        ParseError('Boolean value is missing')
+    endif
+    result = ( sp.UCComparePrev("1")  or sp.UCComparePrev("TRUE")  or sp.UCComparePrev("T")
+               or sp.UCComparePrev("Y")  or sp.UCComparePrev("YES") )
+endfunc

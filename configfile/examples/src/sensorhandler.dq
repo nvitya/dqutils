@@ -1,0 +1,7 @@
+// just an example object in anoter module
+
+object OSensorHandler:  // sample object
+    sensorscale : float = 1
+endobject
+
+var sensorhandler <- OSensorHandler()

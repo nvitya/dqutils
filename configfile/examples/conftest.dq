@@ -1,0 +1,21 @@
+
+use print
+use ./src/prgconfig
+use ./src/sensorhandler
+
+const CONF_FILE_NAME : rostr = 'conftest.conf'
+
+func *Main():
+    PrintLn('DQ "configfile" test')
+
+    PrintLn('Reading "{}"...', [CONF_FILE_NAME])
+    prgconfig.LoadFile(CONF_FILE_NAME)  // exception happens on config file errors
+    PrintLn('  OK.')
+
+    PrintLn('Configuration:')
+    PrintLn('  http_listen_port = {}', [prgconfig.http_listen_port])
+    PrintLn('  db_host = {}', [prgconfig.db_host])
+    PrintLn('  db_name = {}', [prgconfig.db_name])
+    PrintLn('  log_to_output = {}', [prgconfig.log_to_output])
+    PrintLn('  sensorscale = {}', [sensorhandler.sensorscale])
+endfunc
