@@ -1,0 +1,180 @@
+/*
+ * Copyright (c) 2026 Viktor Guath-Nagy and DQ contributors
+ * This file is originated from the DQ-Utilities project at
+ *   https://github.com/nvitya/dqutils/i2c/oshw_i2c.dq
+ *
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ * See ../LICENSES/Apache-2.0.txt and ../LICENSES/LLVM-exception.txt
+ * for the full license text.
+ * ---------------------------------------------------------------------------------
+ * file:    i2c/oshw_i2c.dq
+ * authors: nvitya
+ * created: 2026-10-09
+ * brief:   Linux I2C read/write helper for /dev/i2c-n devices
+ */
+
+const MODVER_OSHW_I2C : rostr = '1.0'
+
+// Linux I2C device access, migrated from sensorlogger/extlib/oshw_i2c.pas.
+
+// The high byte selects how many low-order bytes of aextra are sent before
+// the payload. This is useful for register-addressed I2C devices.
+const(uint32):
+    I2CEX_0    = 0x00000000
+    I2CEX_1    = 0x01000000
+    I2CEX_2    = 0x02000000
+    I2CEX_3    = 0x03000000
+    I2CEX_MASK = 0x03000000
+endconst
+
+// Matches Linux struct i2c_msg. Its native ABI layout is 16 bytes on RV64.
+struct SI2cMsg:
+    addr  : uint16
+    flags : uint16
+    len   : uint16
+    buf   : pointer
+endstruct
+
+// Matches Linux struct i2c_rdwr_ioctl_data.
+struct SI2cRdwrIoctlData:
+    msgs  : ^SI2cMsg
+    nmsgs : uint32
+endstruct
+
+object OHwI2c:
+private
+    fd       : int32
+    i2c_msg  : [2]SI2cMsg
+    i2c_data : SI2cRdwrIoctlData
+    wbuf     : [I2C_MAX_DATA + I2C_MAX_EXTRA_DATA]byte
+
+    func Initialized() -> bool ..
+
+public
+    devname : str
+
+    func *Create() ..
+    func *Destroy() ..
+
+    func Init(adevname : rostr) -> bool ..
+    func Close() ..
+
+    func Write(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32) -> int ..
+    func Read(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32) -> int ..
+
+    property initialized : bool read Initialized
+endobject
+
+
+implementation
+
+
+const I2C_MAX_DATA       : uint32 = 256
+const I2C_MAX_EXTRA_DATA : uint32 = 3
+const I2C_RDWR           : uint   = 0x0707  // combined read/write transfer
+const O_RDWR             : int    = 2
+
+const(uint16):
+    I2C_M_RD           = 0x0001
+    I2C_M_TEN          = 0x0010
+    I2C_M_DMA_SAFE     = 0x0200
+    I2C_M_RECV_LEN     = 0x0400
+    I2C_M_NO_RD_ACK    = 0x0800
+    I2C_M_IGNORE_NAK   = 0x1000
+    I2C_M_REV_DIR_ADDR = 0x2000
+    I2C_M_NOSTART      = 0x4000
+    I2C_M_STOP         = 0x8000
+endconst
+
+func libc_open(pathname : ^char, flags : int) -> int32 [[external('open')]] ..
+func libc_close(fd : int32) -> int32 [[external('close')]] ..
+func libc_ioctl(fd : int32, request : uint, arg : pointer) -> int32 [[external('ioctl')]] ..
+
+
+func OHwI2c.*Create():
+    fd = -1
+    devname = '/dev/i2c-0'
+endfunc
+
+func OHwI2c.*Destroy():
+    Close()
+endfunc
+
+func OHwI2c.Initialized() -> bool:
+    return fd >= 0
+endfunc
+
+func OHwI2c.Init(adevname : rostr) -> bool:
+    use .
+    Close()
+    devname = adevname
+    fd = libc_open(adevname.pchar, O_RDWR)
+    return Initialized()
+endfunc
+
+func OHwI2c.Close():
+    if fd >= 0:
+        @.libc_close(fd)
+        fd = -1
+    endif
+endfunc
+
+func OHwI2c.Write(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32) -> int:
+    use .
+    if len > I2C_MAX_DATA:
+        len = I2C_MAX_DATA
+    endif
+
+    var extralen : uint32 = (aextra & I2CEX_MASK) >> 24
+    for i : uint32 = 0 count extralen:
+        wbuf[i] = (aextra >> (i * 8)) & 0xFF
+    endfor
+
+    // Copy only the requested bytes, retaining the Pascal API's 256-byte cap.
+    var src : ^byte = ^byte(dataptr)
+    for i : uint32 = 0 count len:
+        wbuf[extralen + i] = src[i]^
+    endfor
+
+    i2c_msg[0].addr  = aaddr
+    i2c_msg[0].flags = 0
+    i2c_msg[0].len   = len + extralen
+    i2c_msg[0].buf   = %wbuf[0]
+
+    i2c_data.msgs  = %i2c_msg[0]
+    i2c_data.nmsgs = 1
+    return libc_ioctl(fd, I2C_RDWR, %i2c_data)
+endfunc
+
+func OHwI2c.Read(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32) -> int:
+    use .
+    if len > I2C_MAX_DATA:
+        len = I2C_MAX_DATA
+    endif
+
+    var msgcount : uint32 = 0
+    var extralen : uint32 = (aextra & I2CEX_MASK) >> 24
+    if extralen > 0:
+        // Do not depend on the host byte order when issuing the register write.
+        for i : uint32 = 0 count extralen:
+            wbuf[i] = (aextra >> (i * 8)) & 0xFF
+        endfor
+
+        i2c_msg[msgcount].addr  = uint16(aaddr)
+        i2c_msg[msgcount].flags = 0
+        i2c_msg[msgcount].len   = uint16(extralen)
+        i2c_msg[msgcount].buf   = %wbuf[0]
+        msgcount += 1
+    endif
+
+    i2c_msg[msgcount].addr  = aaddr
+    i2c_msg[msgcount].flags = I2C_M_RD
+    i2c_msg[msgcount].len   = len
+    i2c_msg[msgcount].buf   = dataptr
+    msgcount += 1
+
+    i2c_data.msgs  = %i2c_msg[0]
+    i2c_data.nmsgs = msgcount
+    return libc_ioctl(fd, I2C_RDWR, %i2c_data)
+endfunc
+
