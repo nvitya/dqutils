@@ -41,6 +41,9 @@ struct SI2cRdwrIoctlData:
     nmsgs : uint32
 endstruct
 
+const I2C_MAX_DATA       : uint32 = 256
+const I2C_MAX_EXTRA_DATA : uint32 = 3
+
 object OHwI2c:
 private
     fd       : int32
@@ -69,8 +72,6 @@ endobject
 implementation
 
 
-const I2C_MAX_DATA       : uint32 = 256
-const I2C_MAX_EXTRA_DATA : uint32 = 3
 const I2C_RDWR           : uint   = 0x0707  // combined read/write transfer
 const O_RDWR             : int    = 2
 
