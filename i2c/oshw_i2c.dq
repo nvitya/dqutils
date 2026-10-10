@@ -13,9 +13,15 @@
  * brief:   Linux I2C read/write helper for /dev/i2c-n devices
  */
 
-const MODVER_OSHW_I2C : rostr = '1.0'
+const MODVER_OSHW_I2C : rostr = '1.1'
+/*
+1.1: exception mode introduced
+*/
 
 // Linux I2C device access, migrated from sensorlogger/extlib/oshw_i2c.pas.
+
+object EI2cBus(Exception):
+endobject
 
 // The high byte selects how many low-order bytes of aextra are sent before
 // the payload. This is useful for register-addressed I2C devices.
@@ -46,7 +52,7 @@ const I2C_MAX_EXTRA_DATA : uint32 = 3
 
 object OHwI2c:
 private
-    fd       : int32
+    fd       : int32 = -1
     i2c_msg  : [2]SI2cMsg
     i2c_data : SI2cRdwrIoctlData
     wbuf     : [I2C_MAX_DATA + I2C_MAX_EXTRA_DATA]byte
@@ -54,9 +60,14 @@ private
     func Initialized() -> bool ..
 
 public
-    devname : str
+    devname        : str
+    errorcode      : int
+    exception_mode : bool
 
-    func *Create() ..
+    func *Create(aexception_mode : bool):
+        exception_mode = aexception_mode
+    endfunc
+
     func *Destroy() ..
 
     func Init(adevname : rostr) -> bool ..
@@ -92,11 +103,6 @@ func libc_close(fd : int32) -> int32 [[external('close')]] ..
 func libc_ioctl(fd : int32, request : uint, arg : pointer) -> int32 [[external('ioctl')]] ..
 
 
-func OHwI2c.*Create():
-    fd = -1
-    devname = '/dev/i2c-0'
-endfunc
-
 func OHwI2c.*Destroy():
     Close()
 endfunc
@@ -109,8 +115,16 @@ func OHwI2c.Init(adevname : rostr) -> bool:
     use .
     Close()
     devname = adevname
-    fd = libc_open(adevname.pchar, O_RDWR)
-    return Initialized()
+    fd = libc_open(devname.pchar, O_RDWR)
+    result = (fd >= 0)
+    if not result:
+        errorcode = @.Errno()
+        if exception_mode and not result:
+            raise EI2cBus('{} open error: {}', [devname, errorcode])
+        endif
+    else:
+        errorcode = 0
+    endif
 endfunc
 
 func OHwI2c.Close():
@@ -144,7 +158,16 @@ func OHwI2c.Write(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32
 
     i2c_data.msgs  = %i2c_msg[0]
     i2c_data.nmsgs = 1
-    return libc_ioctl(fd, I2C_RDWR, %i2c_data)
+    result = libc_ioctl(fd, I2C_RDWR, %i2c_data)
+    if result < 0:
+        errorcode = @.Errno()
+        result = -errorcode
+        if exception_mode:
+            raise EI2cBus('{} Write({:2X}) error: {}', [devname, aaddr, errorcode])
+        endif
+    else:
+        errorcode = 0
+    endif
 endfunc
 
 func OHwI2c.Read(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32) -> int:
@@ -176,6 +199,15 @@ func OHwI2c.Read(aaddr : byte, aextra : uint32, dataptr : pointer, len : uint32)
 
     i2c_data.msgs  = %i2c_msg[0]
     i2c_data.nmsgs = msgcount
-    return libc_ioctl(fd, I2C_RDWR, %i2c_data)
+    result = libc_ioctl(fd, I2C_RDWR, %i2c_data)
+    if result < 0:
+        errorcode = @.Errno()
+        result = -errorcode
+        if exception_mode:
+            raise EI2cBus('{} Read({:2X}) error: {}', [devname, aaddr, errorcode])
+        endif
+    else:
+        errorcode = 0
+    endif
 endfunc
 
