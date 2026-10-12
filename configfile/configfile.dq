@@ -61,6 +61,9 @@ endfunc
 
 func OConfigFile.LoadFile(afilename : rostr):
     filename = afilename
+    if not @.FileExists(filename):
+        raise EConfigFile('Config file "{}" does not exists.', [filename])
+    endif
     filedata = @.FileReadText(filename)
 
     //@.PrintLn('File data:\n{}', [filedata])
